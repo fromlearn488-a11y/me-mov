@@ -1,72 +1,82 @@
 import requests
+import json
 from datetime import datetime
 
-USER_ID = "p.lduug7hx3zgtpyp77wrmnhuiyy"
-
-GRAPHQL_URL = "https://www.imdb.com/graphql"
+URL = "https://www.imdb.com/user/p.lduug7hx3zgtpyp77wrmnhuiyy/watchhistory/"
 
 headers = {
     "User-Agent": "Mozilla/5.0",
-    "Content-Type": "application/json",
-    "Accept": "application/json"
+    "Accept-Language": "en-US,en;q=0.9"
 }
 
-# This query is based on IMDb internal structure (watch history feed)
-query = {
-    "query": """
-    query WatchHistory($id: ID!) {
-      user(id: $id) {
-        name
-        watchHistory {
-          edges {
-            node {
-              titleText {
-                text
-              }
-            }
-          }
-        }
-      }
-    }
-    """,
-    "variables": {
-        "id": USER_ID
-    }
-}
+def fetch_html():
+    res = requests.get(URL, headers=headers)
 
-def fetch_movies():
-    res = requests.post(GRAPHQL_URL, json=query, headers=headers)
+    print("Status:", res.status_code)
 
     if res.status_code != 200:
-        print("Request failed:", res.status_code)
-        return []
+        return None
 
-    data = res.json()
+    return res.text
 
-    edges = data["data"]["user"]["watchHistory"]["edges"]
 
+def extract_json(html):
+    start = html.find('__NEXT_DATA__')
+    if start == -1:
+        return None
+
+    start = html.find('>', start) + 1
+    end = html.find('</script>', start)
+
+    try:
+        return json.loads(html[start:end])
+    except:
+        return None
+
+
+def extract_movies(data):
     movies = []
-    for e in edges:
-        title = e["node"]["titleText"]["text"]
-        movies.append(title)
+
+    try:
+        edges = data["props"]["pageProps"]["mainColumnData"]["edges"]
+
+        for e in edges:
+            node = e.get("node", {})
+            title = node.get("titleText", {}).get("text")
+
+            if title:
+                movies.append(title)
+
+    except:
+        pass
 
     return movies
 
 
 def update_readme(movies):
-    movies = movies[:10]
+    if not movies:
+        print("No movies found")
+        return
 
     block = "## 🎬 Recently Watched\n\n"
-    for m in movies:
+    for m in movies[:10]:
         block += f"- {m}\n"
 
     block += f"\n_Last updated: {datetime.now().strftime('%Y-%m-%d')}_\n"
 
-    with open("README.md", "r", encoding="utf-8") as f:
-        content = f.read()
+    try:
+        with open("README.md", "r", encoding="utf-8") as f:
+            content = f.read()
+    except:
+        print("README.md not found")
+        return
 
     start = content.find("<!-- IMDB_START -->")
     end = content.find("<!-- IMDB_END -->")
+
+    if start == -1 or end == -1:
+        print("Missing README markers")
+        return
 
     new_content = (
         content[:start + len("<!-- IMDB_START -->")]
@@ -79,15 +89,23 @@ def update_readme(movies):
     with open("README.md", "w", encoding="utf-8") as f:
         f.write(new_content)
 
-    print("Updated README")
+    print("README updated")
 
 
 def main():
-    movies = fetch_movies()
-
-    if not movies:
-        print("No data found")
+    html = fetch_html()
+    if not html:
+        print("Failed to fetch IMDb page")
         return
+
+    data = extract_json(html)
+    if not data:
+        print("Failed to parse JSON")
+        return
+
+    movies = extract_movies(data)
+
+    print("Movies found:", len(movies))
 
     update_readme(movies)
 
