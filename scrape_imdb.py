@@ -1,7 +1,7 @@
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 
-IMDB_URL = "https://www.imdb.com/user/p.lduug7hx3zgtpyp77wrmnhuiyy/watchhistory/"
+URL = "https://www.imdb.com/user/p.lduug7hx3zgtpyp77wrmnhuiyy/watchhistory/"
 
 
 def scrape_movies():
@@ -11,29 +11,40 @@ def scrape_movies():
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
-        page.goto(IMDB_URL, wait_until="networkidle")
+        page.goto(URL, wait_until="domcontentloaded")
 
-        # scroll to load lazy content
-        for _ in range(6):
-            page.mouse.wheel(0, 3000)
-            page.wait_for_timeout(1200)
+        # IMPORTANT: wait extra for JS hydration
+        page.wait_for_timeout(5000)
 
-        # collect title links
-        elements = page.query_selector_all("a")
+        # scroll slowly to trigger lazy load
+        for _ in range(8):
+            page.mouse.wheel(0, 2500)
+            page.wait_for_timeout(1500)
+
+        # 🎯 target movie title containers (IMPORTANT FIX)
+        elements = page.query_selector_all("li a")
 
         for el in elements:
             try:
                 text = el.inner_text().strip()
                 href = el.get_attribute("href")
 
-                if text and href and "/title/" in href:
+                # filter real IMDb titles
+                if (
+                    text
+                    and href
+                    and "/title/" in href
+                    and len(text) > 2
+                    and "Episode" not in text
+                ):
                     movies.append(text)
+
             except:
                 continue
 
         browser.close()
 
-    # remove duplicates while keeping order
+    # remove duplicates while preserving order
     seen = set()
     clean = []
 
@@ -42,7 +53,7 @@ def scrape_movies():
             seen.add(m)
             clean.append(m)
 
-    return clean[:10]
+    return clean[:15]
 
 
 def update_readme(movies):
@@ -57,12 +68,8 @@ def update_readme(movies):
 
     block += f"\n_Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}_\n"
 
-    try:
-        with open("README.md", "r", encoding="utf-8") as f:
-            content = f.read()
-    except:
-        print("README.md not found")
-        return
+    with open("README.md", "r", encoding="utf-8") as f:
+        content = f.read()
 
     start = content.find("<!-- IMDB_START -->")
     end = content.find("<!-- IMDB_END -->")
@@ -82,7 +89,7 @@ def update_readme(movies):
     with open("README.md", "w", encoding="utf-8") as f:
         f.write(new_content)
 
-    print("README updated successfully")
+    print("Updated README with", len(movies), "movies")
 
 
 if __name__ == "__main__":
