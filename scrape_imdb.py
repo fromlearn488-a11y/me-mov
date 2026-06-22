@@ -1,8 +1,8 @@
 from playwright.sync_api import sync_playwright
 from datetime import datetime
+import json
 
 URL = "https://www.imdb.com/user/p.lduug7hx3zgtpyp77wrmnhuiyy/watchhistory/"
-
 
 def scrape_movies():
     movies = []
@@ -11,43 +11,41 @@ def scrape_movies():
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
-        page.goto(URL, wait_until="domcontentloaded")
-
-        # IMPORTANT: wait extra for JS hydration
-        page.wait_for_timeout(5000)
-
-        # scroll slowly to trigger lazy load
-        for _ in range(8):
-            page.mouse.wheel(0, 2500)
-            page.wait_for_timeout(1500)
-
-        # 🎯 target movie title containers (IMPORTANT FIX)
-        elements = page.query_selector_all("li a")
-
-        for el in elements:
+        # 🔥 capture network responses
+        def handle_response(response):
             try:
-                text = el.inner_text().strip()
-                href = el.get_attribute("href")
+                if "watchhistory" in response.url and response.request.resource_type == "fetch":
+                    data = response.json()
 
-                # filter real IMDb titles
-                if (
-                    text
-                    and href
-                    and "/title/" in href
-                    and len(text) > 2
-                    and "Episode" not in text
-                ):
-                    movies.append(text)
-
+                    # try different possible structures
+                    if isinstance(data, dict):
+                        if "mainColumnData" in str(data):
+                            extract_from_json(data)
             except:
-                continue
+                pass
+
+        def extract_from_json(obj):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k == "titleText" and isinstance(v, dict):
+                        if "text" in v:
+                            movies.append(v["text"])
+                    else:
+                        extract_from_json(v)
+            elif isinstance(obj, list):
+                for i in obj:
+                    extract_from_json(i)
+
+        page.on("response", handle_response)
+
+        page.goto(URL, wait_until="networkidle")
+        page.wait_for_timeout(8000)
 
         browser.close()
 
-    # remove duplicates while preserving order
+    # clean duplicates
     seen = set()
     clean = []
-
     for m in movies:
         if m not in seen:
             seen.add(m)
@@ -62,7 +60,6 @@ def update_readme(movies):
         return
 
     block = "## 🎬 Recently Watched\n\n"
-
     for m in movies:
         block += f"- {m}\n"
 
@@ -73,10 +70,6 @@ def update_readme(movies):
 
     start = content.find("<!-- IMDB_START -->")
     end = content.find("<!-- IMDB_END -->")
-
-    if start == -1 or end == -1:
-        print("Missing README markers")
-        return
 
     new_content = (
         content[:start + len("<!-- IMDB_START -->")]
