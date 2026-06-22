@@ -1,4 +1,4 @@
-name: Update IMDb Watch History
+name: IMDb Watch History
 
 on:
   schedule:
@@ -6,31 +6,28 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # 🔥 IMPORTANT FIX
+  contents: write
 
 jobs:
   update:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
-        run: pip install requests
+      - run: |
+          pip install playwright
+          playwright install --with-deps
 
-      - name: Run script
-        run: python update_imdb.py
+      - run: python scrape_imdb.py
 
-      - name: Commit changes
-        run: |
+      - run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add README.md
-          git commit -m "Update IMDb watch history" || exit 0
+          git commit -m "update imdb" || exit 0
           git push
