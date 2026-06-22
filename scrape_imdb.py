@@ -1,49 +1,66 @@
 from playwright.sync_api import sync_playwright
-from datetime import datetime
 import json
+from datetime import datetime
 
 URL = "https://www.imdb.com/user/p.lduug7hx3zgtpyp77wrmnhuiyy/watchhistory/"
 
-def scrape_movies():
-    movies = []
 
+def scrape_movies():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
-        # 🔥 capture network responses
-        def handle_response(response):
-            try:
-                if "watchhistory" in response.url and response.request.resource_type == "fetch":
-                    data = response.json()
+        page.goto(URL, wait_until="domcontentloaded")
 
-                    # try different possible structures
-                    if isinstance(data, dict):
-                        if "mainColumnData" in str(data):
-                            extract_from_json(data)
-            except:
-                pass
+        # wait for hydration
+        page.wait_for_timeout(5000)
 
-        def extract_from_json(obj):
-            if isinstance(obj, dict):
-                for k, v in obj.items():
-                    if k == "titleText" and isinstance(v, dict):
-                        if "text" in v:
-                            movies.append(v["text"])
-                    else:
-                        extract_from_json(v)
-            elif isinstance(obj, list):
-                for i in obj:
-                    extract_from_json(i)
-
-        page.on("response", handle_response)
-
-        page.goto(URL, wait_until="networkidle")
-        page.wait_for_timeout(8000)
+        html = page.content()
 
         browser.close()
 
-    # clean duplicates
+    # extract __NEXT_DATA__
+    start_tag = '<script id="__NEXT_DATA__" type="application/json">'
+    start = html.find(start_tag)
+
+    if start == -1:
+        print("No __NEXT_DATA__ found")
+        return []
+
+    start += len(start_tag)
+    end = html.find("</script>", start)
+
+    json_text = html[start:end]
+
+    try:
+        data = json.loads(json_text)
+    except:
+        print("JSON parse failed")
+        return []
+
+    # navigate safely
+    movies = []
+
+    try:
+        edges = (
+            data["props"]["pageProps"]
+            ["mainColumnData"]
+            ["advancedTitleSearch"]
+            ["edges"]
+        )
+
+        for e in edges:
+            try:
+                title = e["node"]["title"]["titleText"]["text"]
+                if title:
+                    movies.append(title)
+            except:
+                continue
+
+    except Exception as e:
+        print("Path error:", e)
+
+    # remove duplicates
     seen = set()
     clean = []
     for m in movies:
@@ -51,7 +68,7 @@ def scrape_movies():
             seen.add(m)
             clean.append(m)
 
-    return clean[:15]
+    return clean[:20]
 
 
 def update_readme(movies):
@@ -60,6 +77,7 @@ def update_readme(movies):
         return
 
     block = "## 🎬 Recently Watched\n\n"
+
     for m in movies:
         block += f"- {m}\n"
 
@@ -70,6 +88,10 @@ def update_readme(movies):
 
     start = content.find("<!-- IMDB_START -->")
     end = content.find("<!-- IMDB_END -->")
+
+    if start == -1 or end == -1:
+        print("Missing README markers")
+        return
 
     new_content = (
         content[:start + len("<!-- IMDB_START -->")]
